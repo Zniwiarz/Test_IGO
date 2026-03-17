@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trenażer IGO 2026</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-900 selection:bg-red-200">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Awaryjna baza, jeśli plik baza.json jeszcze nie istnieje na serwerze
+        const DEMO_DB = [
+            { id: 1419, cat: 10, q: "W PPSiŚ korespondencja pomiędzy KDR a kierującym PPSiŚ odbywa się na kanale sieci:", a: "c", o: { a: "KDW", b: "KSW", c: "KRG" } },
+            { id: 1420, cat: 10, q: "Czy dopuszcza się wykorzystanie kanału powiatowego celem zgłaszania się jednostek przyjeżdżających do PPSiŚ:", a: "a", o: { a: "nie", b: "tak, tylko siły z własnego powiatu", c: "tak, decyzja KDR" } }
+        ];
+
+        const CHAPTERS = [
+            { id: 0, title: "Egzamin Pełny (Wszystkie działy)" },
+            { id: 1, title: "I. Bezpieczeństwo pożarowe obiektów i budynków" },
+            { id: 2, title: "II. Środki gaśnicze neutralizatory i sorbenty" },
+            { id: 3, title: "III. Wyposażenie techniczne i sprzęt" },
+            { id: 4, title: "IV. Prawa i obowiązki operatora pojazdu / sprzętu" },
+            { id: 5, title: "V. Taktyka działań gaśniczych" },
+            { id: 6, title: "VI. Taktyka ratownicza (techniczne/chemiczne)" },
+            { id: 7, title: "VII. Taktyka ratownicza (SGR Techniczne)" },
+            { id: 8, title: "VIII. Taktyka ratownicza (SGR Chemiczne)" },
+            { id: 9, title: "IX. Taktyka ratownicza (SGR Wysokościowe)" },
+            { id: 10, title: "X. Łączność" },
+            { id: 11, title: "XI. Ratownictwo medyczne" },
+            { id: 12, title: "XII. BHP" },
+            { id: 13, title: "XIII. Dokumentacja i zasady dysponowania" },
+            { id: 14, title: "XIV. Prawo i organizacja KSRG" },
+            { id: 15, title: "XV. Kierowanie działaniami ratowniczymi" },
+            { id: 16, title: "XVI. Inne zagadnienia" }
+        ];
+
+        function App() {
+            const [view, setView] = useState('menu');
+            const [search, setSearch] = useState("");
+            
+            const [activeDB, setActiveDB] = useState(DEMO_DB);
+            const [dbName, setDbName] = useState("Baza demonstracyjna (Brak pliku baza.json)");
+            const [isLoadingDb, setIsLoadingDb] = useState(true);
+            
+            const [selectedChapter, setSelectedChapter] = useState(null);
+            const [limitQuestions, setLimitQuestions] = useState(20);
+            const [mode, setMode] = useState('random'); 
+            const [startFromId, setStartFromId] = useState("");
+
+            const [quizSet, setQuizSet] = useState([]);
+            const [current, setCurrent] = useState(0);
+            const [answers, setAnswers] = useState({});
+            const [showFeedback, setShowFeedback] = useState(false);
+
+            const fileInputRef = useRef(null);
+
+            // Automatyczne pobieranie bazy z serwera GitHub
+            useEffect(() => {
+                fetch('./baza.json')
+                    .then(res => {
+                        if (!res.ok) throw new Error("Brak pliku");
+                        return res.json();
+                    })
+                    .then(data => {
+                        if (Array.isArray(data) && data.length > 0) {
+                            setActiveDB(data);
+                            setDbName(`Baza Oficjalna IGO 2026 (${data.length} pytań)`);
+                        }
+                    })
+                    .catch(err => console.log("Ładowanie bazy demo..."))
+                    .finally(() => setIsLoadingDb(false));
+            }, []);
+
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    try {
+                        const json = JSON.parse(ev.target.result);
+                        setActiveDB(json);
+                        setDbName(`Wczytano ręcznie: ${json.length} pytań`);
+                        alert("Baza została wczytana pomyślnie!");
+                    } catch (err) {
+                        alert("Błąd: To nie jest poprawny plik JSON.");
+                    }
+                };
+                reader.readAsText(file);
+            };
+
+            const filteredChapters = CHAPTERS.filter(c => 
+                c.title.toLowerCase().includes(search.toLowerCase())
+            );
+
+            const openSetup = (ch) => {
+                setSelectedChapter(ch);
+                const pool = ch.id === 0 ? activeDB : activeDB.filter(q => q.cat === ch.id);
+                setLimitQuestions(pool.length > 20 ? 20 : (pool.length === 0 ? 0 : pool.length));
+                setView('setup');
+            };
+
+            const startQuiz = () => {
+                let pool = selectedChapter.id === 0 ? [...activeDB] : activeDB.filter(q => q.cat === selectedChapter.id);
+                if (pool.length === 0) { alert("Brak pytań w tym dziale."); return; }
+
+                pool.sort((a, b) => a.id - b.id);
+                let finalSet = [];
+                
+                if (mode === 'sequential') {
+                    let startIndex = 0;
+                    if (startFromId) {
+                        const found = pool.findIndex(q => q.id.toString() === startFromId);
+                        if (found !== -1) startIndex = found;
+                    }
+                    finalSet = pool.slice(startIndex, startIndex + parseInt(limitQuestions));
+                } else {
+                    finalSet = [...pool].sort(() => Math.random() - 0.5).slice(0, parseInt(limitQuestions));
+                }
+
+                if (finalSet.length === 0) { alert("Brak pytań spełniających kryteria."); return; }
+
+                setQuizSet(finalSet);
+                setCurrent(0);
+                setAnswers({});
+                setShowFeedback(false);
+                setView('quiz');
+            };
+
+            const handleSelect = (key) => {
+                if (showFeedback) return;
+                setAnswers({ ...answers, [current]: key });
+                setShowFeedback(true);
+            };
+
+            const score = Object.entries(answers).reduce((acc, [idx, val]) => (val === quizSet[idx].a ? acc + 1 : acc), 0);
+
+            if (isLoadingDb) return <div className="min-h-screen flex items-center justify-center font-bold text-slate-400">Łączenie z bazą danych...</div>;
+
+            return (
+                <div className="max-w-4xl mx-auto pb-12">
+                    {view === 'menu' && (
+                        <div className="space-y-8 p-4 md:p-8 animate-in fade-in">
+                            <header className="text-center pt-6">
+                                <div className="bg-red-600 w-24 h-24 rounded-3xl flex items-center justify-center mx-auto shadow-xl mb-6">
+                                    <i className="fa-solid fa-fire-extinguisher text-white text-5xl"></i>
+                                </div>
+                                <h1 className="text-4xl md:text-5xl font-black text-slate-800 uppercase">Trenażer IGO</h1>
+                                <div className="inline-flex items-center gap-2 bg-white px-4 py-2 rounded-full border border-slate-200 mt-4 shadow-sm">
+                                    <i className={`fa-solid fa-database ${activeDB.length > 50 ? 'text-emerald-500' : 'text-amber-500'}`}></i>
+                                    <span className="text-sm font-bold text-slate-700">{dbName}</span>
+                                </div>
+                            </header>
+
+                            {activeDB.length < 50 && (
+                                <div className="bg-red-50 p-6 rounded-2xl border border-red-200 text-center">
+                                    <h3 className="font-bold text-red-800 mb-2">Baza pytań nie została jeszcze znaleziona na serwerze!</h3>
+                                    <p className="text-sm text-red-600 mb-4">Upewnij się, że plik <b>baza.json</b> znajduje się w tym samym folderze na GitHubie co ten plik HTML.</p>
+                                    <button onClick={() => fileInputRef.current.click()} className="bg-white text-red-600 px-4 py-2 rounded-xl font-bold border border-red-200 shadow-sm hover:bg-red-600 hover:text-white transition-all">
+                                        Wczytaj plik tymczasowo ręcznie
+                                    </button>
+                                    <input type="file" accept=".json" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+                                </div>
+                            )}
+
+                            <div className="grid gap-4 mt-8">
+                                <div className="relative">
+                                    <input 
+                                        className="w-full bg-white border-2 border-slate-100 rounded-2xl p-4 pl-14 focus:border-red-500 outline-none shadow-sm font-medium"
+                                        placeholder="Szukaj działu..."
+                                        value={search} onChange={e => setSearch(e.target.value)}
+                                    />
+                                    <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 text-xl"></i>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    {filteredChapters.map(ch => (
+                                        <button key={ch.id} onClick={() => openSetup(ch)} className={`bg-white p-5 rounded-2xl border border-slate-200 text-left hover:border-red-500 transition-all flex items-center gap-4 ${ch.id === 0 ? 'md:col-span-2 border-red-200 bg-red-50' : ''}`}>
+                                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 text-xl ${ch.id === 0 ? 'bg-red-600 text-white shadow-md' : 'bg-slate-100 text-slate-400'}`}>
+                                                {ch.id === 0 ? <i className="fa-solid fa-ranking-star"></i> : <i className="fa-solid fa-book-bookmark"></i>}
+                                            </div>
+                                            <div>
+                                                <span className="font-black text-slate-800 block mb-1">{ch.title}</span>
+                                                <span className="text-xs font-bold text-slate-400">Pytań: {ch.id === 0 ? activeDB.length : activeDB.filter(q => q.cat === ch.id).length}</span>
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {view === 'setup' && (
+                        <div className="space-y-6 p-4 md:p-8 max-w-xl mx-auto">
+                            <button onClick={() => setView('menu')} className="flex items-center gap-2 text-slate-400 font-black hover:text-red-600 uppercase text-xs mb-4">
+                                <i className="fa-solid fa-arrow-left"></i> Wróć
+                            </button>
+                            <div className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100">
+                                <h2 className="text-2xl font-black text-slate-800 mb-8">{selectedChapter.title}</h2>
+                                <div className="space-y-6">
+                                    <div>
+                                        <label className="text-xs font-black text-slate-400 uppercase flex justify-between mb-3">
+                                            Ilość pytań <span className="text-red-600">Max: {selectedChapter.id === 0 ? activeDB.length : activeDB.filter(q => q.cat === selectedChapter.id).length}</span>
+                                        </label>
+                                        <div className="flex gap-4 items-center">
+                                            <input type="range" min="1" max={selectedChapter.id === 0 ? activeDB.length : activeDB.filter(q => q.cat === selectedChapter.id).length} value={limitQuestions} onChange={e => setLimitQuestions(e.target.value)} className="flex-grow h-2 bg-slate-200 rounded-full appearance-none accent-red-600" />
+                                            <div className="w-16 h-12 flex items-center justify-center bg-slate-100 rounded-xl font-black text-xl">{limitQuestions}</div>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <button onClick={() => setMode('random')} className={`p-4 rounded-2xl border-2 flex flex-col items-center gap-2 ${mode === 'random' ? 'border-red-600 bg-red-50 text-red-600' : 'border-slate-100 bg-slate-50 text-slate-400'}`}>
+                                            <i className="fa-solid fa-shuffle text-2xl"></i><span className="font-bold text-xs uppercase">Losowo</span>
+                                        </button>
+                                        <button onClick={() => setMode('sequential')} className={`p-4 rounded-2xl border-2 flex flex-col items-center gap-2 ${mode === 'sequential' ? 'border-red-600 bg-red-50 text-red-600' : 'border-slate-100 bg-slate-50 text-slate-400'}`}>
+                                            <i className="fa-solid fa-arrow-down-1-9 text-2xl"></i><span className="font-bold text-xs uppercase">Kolejno</span>
+                                        </button>
+                                    </div>
+                                    {mode === 'sequential' && (
+                                        <input type="text" placeholder="Zacznij od ID (np. 1419)..." value={startFromId} onChange={e => setStartFromId(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl p-4 font-bold outline-none focus:border-red-500" />
+                                    )}
+                                    <button onClick={startQuiz} disabled={limitQuestions == 0} className={`w-full text-white py-5 rounded-xl font-black text-lg flex items-center justify-center gap-2 ${limitQuestions > 0 ? 'bg-slate-900 hover:bg-red-600' : 'bg-slate-300'}`}>
+                                        START <i className="fa-solid fa-play"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {view === 'quiz' && (
+                        <div className="p-4 md:p-8 max-w-2xl mx-auto">
+                            <div className="flex justify-between items-end mb-6">
+                                <div>
+                                    <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-1 rounded uppercase">{selectedChapter.title}</span>
+                                    <div className="text-3xl font-black text-slate-800 mt-1">{current + 1} <span className="text-slate-300">/</span> {quizSet.length}</div>
+                                </div>
+                                <button onClick={() => setView('menu')} className="text-slate-400 hover:text-red-600 text-2xl"><i className="fa-solid fa-circle-xmark"></i></button>
+                            </div>
+
+                            <div className="w-full h-2 bg-slate-200 rounded-full mb-8 overflow-hidden"><div className="h-full bg-red-600 transition-all duration-300" style={{ width: `${((current + 1)/quizSet.length)*100}%` }} /></div>
+
+                            <div className="bg-white rounded-3xl p-6 md:p-10 shadow-xl border border-slate-100">
+                                <div className="mb-8">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase bg-slate-100 px-2 py-1 rounded">ID: {quizSet[current].id}</span>
+                                    <h2 className="text-xl md:text-2xl font-bold text-slate-800 mt-3">{quizSet[current].q}</h2>
+                                </div>
+
+                                <div className="space-y-3">
+                                    {Object.entries(quizSet[current].o).map(([key, text]) => {
+                                        const isSel = answers[current] === key;
+                                        const isCorr = key === quizSet[current].a;
+                                        let s = "w-full p-5 rounded-2xl border-2 text-left flex items-center gap-4 transition-all ";
+                                        if (!showFeedback) s += "border-slate-100 bg-slate-50 hover:border-red-300";
+                                        else if (isCorr) s += "border-emerald-500 bg-emerald-50 text-emerald-900 font-bold shadow-md";
+                                        else if (isSel) s += "border-red-500 bg-red-50 text-red-900";
+                                        else s += "border-slate-50 bg-white opacity-50";
+
+                                        return (
+                                            <button key={key} onClick={() => handleSelect(key)} disabled={showFeedback} className={s}>
+                                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold shrink-0 ${!showFeedback ? 'bg-white text-slate-400' : (isCorr ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white')}`}>{key.toUpperCase()}</div>
+                                                <span className="text-lg">{text}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
+                                {showFeedback && (
+                                    <button onClick={() => current < quizSet.length - 1 ? (setCurrent(current + 1), setShowFeedback(false)) : setView('results')} className="w-full mt-8 bg-slate-900 text-white py-5 rounded-xl font-bold text-lg hover:bg-red-600 transition-all flex items-center justify-center gap-2">
+                                        {current === quizSet.length - 1 ? "WYNIKI" : "DALEJ"} <i className="fa-solid fa-arrow-right"></i>
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {view === 'results' && (
+                        <div className="p-4 max-w-md mx-auto text-center mt-10">
+                            <div className="bg-white rounded-3xl p-10 shadow-2xl border border-slate-100">
+                                <i className="fa-solid fa-award text-red-600 text-6xl mb-6"></i>
+                                <h2 className="text-2xl font-black text-slate-800 uppercase">Wynik testu</h2>
+                                <div className="text-7xl font-black text-red-600 my-6">{Math.round((score/quizSet.length)*100)}%</div>
+                                <p className="text-slate-500 font-bold mb-8">Poprawne: {score} z {quizSet.length}</p>
+                                
+                                <div className="space-y-3">
+                                    <button onClick={startQuiz} className="w-full bg-red-600 text-white py-4 rounded-xl font-bold hover:bg-red-700 flex justify-center items-center gap-2"><i className="fa-solid fa-rotate-right"></i> Powtórz</button>
+                                    <button onClick={() => setView('menu')} className="w-full bg-slate-100 text-slate-700 py-4 rounded-xl font-bold hover:bg-slate-200 flex justify-center items-center gap-2"><i className="fa-solid fa-house"></i> Menu główne</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
